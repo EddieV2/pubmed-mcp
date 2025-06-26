@@ -167,7 +167,24 @@ Get document summaries for articles (metadata without full content).
 
 ## Integration with Claude Desktop
 
-To use this server with Claude Desktop, add the following to your Claude Desktop configuration:
+### Option 1: Using .env file (Recommended)
+
+If you configured your API key in the `.env` file during installation:
+
+```json
+{
+  "mcpServers": {
+    "pubmed": {
+      "command": "/path/to/pubmed-mcp/venv/bin/python",
+      "args": ["/path/to/pubmed-mcp/server.py"]
+    }
+  }
+}
+```
+
+### Option 2: Configure in Claude Desktop
+
+Alternatively, you can specify the API key directly in the Claude Desktop configuration:
 
 ```json
 {
@@ -183,6 +200,8 @@ To use this server with Claude Desktop, add the following to your Claude Desktop
   }
 }
 ```
+
+**Recommendation**: Use Option 1 (.env file) for better security and easier management.
 
 **Note**: Make sure to use the full path to the Python executable in the virtual environment (`venv/bin/python`) to ensure the correct dependencies are available.
 
