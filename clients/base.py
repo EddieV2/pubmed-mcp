@@ -15,6 +15,18 @@ DEFAULT_USER_AGENT = "biomed-mcp/0.2 (Model Context Protocol server for biomedic
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
 
+class UpstreamError(RuntimeError):
+    """An upstream API call failed after exhausting retries (library-agnostic)."""
+
+
+class UpstreamTimeout(UpstreamError):
+    """The upstream API did not respond within the timeout (after retries)."""
+
+
+class UpstreamUnavailable(UpstreamError):
+    """The upstream API could not be reached — DNS/connection error (after retries)."""
+
+
 class BaseHTTPClient:
     """Minimal HTTP wrapper with throttling and retries."""
 
@@ -60,28 +72,50 @@ class BaseHTTPClient:
         *,
         params: Optional[Dict[str, Any]] = None,
         json_body: Optional[Any] = None,
+        timeout: Optional[float] = None,
+        retries: Optional[int] = None,
     ) -> requests.Response:
+        """Issue a request with throttling + retries.
+
+        ``timeout`` and ``retries`` override this client's defaults for a single call —
+        useful for compute-heavy endpoints (e.g. Monarch semsim) that need a longer budget
+        without slowing down the lightweight calls.
+        """
         merged = dict(self.default_params)
         if params:
             merged.update({k: v for k, v in params.items() if v is not None})
         url = self._url(path)
+        eff_timeout = self.timeout if timeout is None else timeout
+        eff_retries = self.max_retries if retries is None else max(0, retries)
 
-        for attempt in range(self.max_retries + 1):
+        for attempt in range(eff_retries + 1):
             self._throttle()
             try:
                 resp = self.session.request(
-                    method, url, params=merged, json=json_body, timeout=self.timeout
+                    method, url, params=merged, json=json_body, timeout=eff_timeout
                 )
                 self._last_request = time.monotonic()
-            except requests.RequestException:
+            except requests.RequestException as exc:
                 self._last_request = time.monotonic()
-                if attempt < self.max_retries:
+                if attempt < eff_retries:
                     time.sleep(0.5 * (2 ** attempt))
                     continue
+                # Out of retries: surface a clean, library-agnostic error so tools can
+                # report "temporarily unavailable" instead of a raw urllib3 traceback.
+                if isinstance(exc, requests.exceptions.Timeout):
+                    raise UpstreamTimeout(
+                        f"{self.base_url} did not respond within {eff_timeout:g}s "
+                        f"(after {eff_retries + 1} attempt(s))."
+                    ) from exc
+                if isinstance(exc, requests.exceptions.ConnectionError):
+                    raise UpstreamUnavailable(
+                        f"could not connect to {self.base_url} — network/DNS error "
+                        f"(after {eff_retries + 1} attempt(s))."
+                    ) from exc
                 raise
 
             # Retry only transient server/throttle statuses; let 4xx surface immediately.
-            if resp.status_code in _RETRYABLE_STATUS and attempt < self.max_retries:
+            if resp.status_code in _RETRYABLE_STATUS and attempt < eff_retries:
                 time.sleep(0.5 * (2 ** attempt))
                 continue
             resp.raise_for_status()
@@ -90,16 +124,45 @@ class BaseHTTPClient:
         # Unreachable, but keeps type checkers happy.
         raise RuntimeError("request retry loop exhausted")
 
-    def get(self, path: str, params: Optional[Dict[str, Any]] = None) -> requests.Response:
-        return self.request("GET", path, params=params)
+    def get(
+        self,
+        path: str,
+        params: Optional[Dict[str, Any]] = None,
+        *,
+        timeout: Optional[float] = None,
+        retries: Optional[int] = None,
+    ) -> requests.Response:
+        return self.request("GET", path, params=params, timeout=timeout, retries=retries)
 
-    def get_json(self, path: str, params: Optional[Dict[str, Any]] = None) -> Any:
-        return self.get(path, params=params).json()
+    def get_json(
+        self,
+        path: str,
+        params: Optional[Dict[str, Any]] = None,
+        *,
+        timeout: Optional[float] = None,
+        retries: Optional[int] = None,
+    ) -> Any:
+        return self.get(path, params=params, timeout=timeout, retries=retries).json()
 
-    def get_text(self, path: str, params: Optional[Dict[str, Any]] = None) -> str:
-        return self.get(path, params=params).text
+    def get_text(
+        self,
+        path: str,
+        params: Optional[Dict[str, Any]] = None,
+        *,
+        timeout: Optional[float] = None,
+        retries: Optional[int] = None,
+    ) -> str:
+        return self.get(path, params=params, timeout=timeout, retries=retries).text
 
     def post_json(
-        self, path: str, json_body: Any, params: Optional[Dict[str, Any]] = None
+        self,
+        path: str,
+        json_body: Any,
+        params: Optional[Dict[str, Any]] = None,
+        *,
+        timeout: Optional[float] = None,
+        retries: Optional[int] = None,
     ) -> Any:
-        return self.request("POST", path, params=params, json_body=json_body).json()
+        return self.request(
+            "POST", path, params=params, json_body=json_body, timeout=timeout, retries=retries
+        ).json()

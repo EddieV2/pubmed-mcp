@@ -10,6 +10,8 @@ diagnostic device. Results are framed accordingly.
 import re
 from typing import Any, Dict, List, Tuple
 
+from clients.base import UpstreamError
+
 _HP_CODE = re.compile(r"^HP:\d{7}$", re.IGNORECASE)
 _XREF_PREFIXES = {
     "OMIM", "ORPHANET", "ORPHA", "MONDO", "DOID", "UMLS",
@@ -100,7 +102,23 @@ def _find_conditions(monarch, hpo, symptoms: List[str], max_results: int, metric
             "symptom_mapping": mapping,
             "hint": "Try simpler clinical terms (e.g. 'seizures', 'short stature') or pass HP: codes directly.",
         }
-    results = monarch.semsim_search(termset, group="Human Diseases", metric=metric, limit=max_results)
+    try:
+        results = monarch.semsim_search(termset, group="Human Diseases", metric=metric, limit=max_results)
+    except UpstreamError as e:
+        # Upstream timed out / was unreachable even after the longer budget + retry. The HPO
+        # mapping still succeeded, so hand it back with an actionable, retryable message rather
+        # than discarding the work.
+        return {
+            "error": f"Condition ranking is temporarily unavailable: {e}",
+            "detail": (
+                "Monarch's semantic-similarity service is compute-heavy and occasionally slow or "
+                "briefly unreachable. Your symptoms mapped to HPO terms successfully — retry shortly."
+            ),
+            "query_symptoms": symptoms,
+            "hpo_terms_used": termset,
+            "symptom_mapping": mapping,
+            "ranked_conditions": [],
+        }
 
     ranked: List[Dict[str, Any]] = []
     for r in results:

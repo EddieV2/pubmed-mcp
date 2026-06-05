@@ -33,6 +33,12 @@ class MonarchClient(BaseHTTPClient):
         "phenodigm_score",
     }
 
+    # semsim/search is compute-heavy and its latency is highly variable: ≈2-3s typically,
+    # but it can spike well past the default 25s timeout under load. Give it a longer budget
+    # plus one retry so a transient spike doesn't sink the whole symptom→disease lookup.
+    SEMSIM_TIMEOUT = 45
+    SEMSIM_RETRIES = 1
+
     def __init__(self) -> None:
         super().__init__(self.BASE_URL, min_interval=0.2)
 
@@ -67,7 +73,9 @@ class MonarchClient(BaseHTTPClient):
             "metric": metric,
             "limit": max(1, min(int(limit), 50)),
         }
-        return self.post_json("semsim/search", body)
+        return self.post_json(
+            "semsim/search", body, timeout=self.SEMSIM_TIMEOUT, retries=self.SEMSIM_RETRIES
+        )
 
     def get_entity(self, entity_id: str) -> Dict[str, Any]:
         """Full entity record by CURIE (e.g. ``MONDO:0007947``)."""
