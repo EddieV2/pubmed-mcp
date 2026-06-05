@@ -1,16 +1,18 @@
-# PubMed MCP Server
+# Biomed MCP Server
 
-A Model Context Protocol (MCP) server that provides access to PubMed's E-utilities API for searching and downloading scientific articles. This server enables LLM applications to search PubMed's vast database of biomedical literature and retrieve article metadata, abstracts, and full content.
+A Model Context Protocol (MCP) server for biomedical research and **rare & genetic disease** lookup. It began as a PubMed client and is growing into a multi-source health server: search the biomedical literature, and — the headline capability — **search a set of symptoms to find candidate illnesses** (phenotype-driven disease ranking via the Monarch Initiative + Human Phenotype Ontology).
+
+> ⚕️ **Decision-support only.** This server retrieves and ranks information from curated knowledge bases. It is not a diagnostic device and does not replace evaluation by a qualified clinician.
 
 ## Features
 
-- **Article Search**: Search PubMed database with flexible query terms
-- **Article Download**: Retrieve full article metadata, abstracts, and available content  
-- **Batch Operations**: Download multiple articles in a single request
-- **Article Summaries**: Get document summaries with metadata
-- **Multiple Formats**: Support for XML, JSON, and text output formats
-- **Rate Limiting**: Automatic rate limiting to respect PubMed API limits
-- **Error Handling**: Robust error handling for API failures
+- **Symptom → Illness**: Map free-text symptoms to standardized HPO terms and rank candidate diseases via Monarch semantic similarity — strongest for rare & genetic disease
+- **Disease Cards**: Structured, multi-source disease summaries — description, inheritance, causal genes, phenotypes, cross-references — enriched with Orphanet (rare-disease definitions), MedlinePlus (patient-friendly info), and OMIM (optional, academic key)
+- **Genetic Variants**: Clinically-relevant variants for a gene from NCBI ClinVar — the disease → gene → variant chain
+- **Clinical Trials**: Search ClinicalTrials.gov (v2 API) by condition and status
+- **Literature**: PubMed (search + download) and Europe PMC (full-text-aware, open-access flags, citation counts)
+- **Shared Rate Limiting**: One throttle across all NCBI E-utilities databases (PubMed, ClinVar, Gene, MeSH, ...), respecting NCBI's per-key limit
+- **Error Handling**: Robust handling of API failures
 
 ## Installation
 
@@ -143,6 +145,82 @@ Get document summaries for articles (metadata without full content).
 - `summaries`: XML summary data
 - `article_count`: Number of articles requested
 
+### Symptom → Disease Tools
+
+#### 5. `find_conditions_by_symptoms`
+
+Rank candidate diseases by how well they match a set of symptoms (the headline tool). Best for rare & genetic disease.
+
+**Parameters:**
+- `symptoms` (list, required): Free-text symptoms (e.g. `["arachnodactyly", "ectopia lentis", "tall stature"]`) or HPO codes (e.g. `"HP:0001166"`)
+- `max_results` (int, optional): Candidate conditions to return, 1–50 (default: 10)
+- `metric` (string, optional): `ancestor_information_content` (default), `jaccard_similarity`, or `phenodigm_score`
+
+**Returns:** `ranked_conditions` (each with MONDO id, name, score, cross_references, description), `hpo_terms_used`, `symptom_mapping`, and a disclaimer.
+
+#### 6. `get_disease_info`
+
+Get a structured summary for a disease by ontology ID.
+
+**Parameters:**
+- `disease_id` (string, required): A disease CURIE, preferably MONDO (e.g. `"MONDO:0007947"`). OMIM/Orphanet IDs also resolve where Monarch has a mapping.
+
+**Returns:** name, description, inheritance, `causal_genes`, characteristic `phenotypes`, `cross_references` (OMIM/Orphanet/ICD/...), and `association_counts`.
+
+#### 7. `lookup_hpo_terms`
+
+Map free-text symptoms to standardized HPO terms — useful to inspect or disambiguate before ranking.
+
+**Parameters:**
+- `symptoms` (list, required): Free-text symptom descriptions or HP: codes
+
+**Returns:** `hpo_terms` (chosen HP: codes), a per-symptom `mapping` (with alternatives), and `count`.
+
+**Example:**
+```json
+{
+  "symptoms": ["seizures", "intellectual disability", "ataxia"],
+  "max_results": 10
+}
+```
+
+### Evidence Tools
+
+#### 8. `search_literature`
+
+Search the biomedical literature via Europe PMC (a PubMed superset with abstracts inline, open-access/full-text flags, preprints, and citation counts).
+
+**Parameters:**
+- `query` (string, required): Search query (e.g. `"FBN1 aortic aneurysm"`)
+- `max_results` (int, optional): 1–100 (default: 10)
+- `open_access_only` (bool, optional): Restrict to open-access articles (default: false)
+
+**Returns:** `total_hits` and `results` (each: id, pmid, doi, title, authors, journal, year, open-access/full-text flags, citation count, abstract).
+
+#### 9. `search_clinical_trials`
+
+Search ClinicalTrials.gov (v2 API) for studies of a condition.
+
+**Parameters:**
+- `condition` (string, required): Disease/condition (e.g. `"Marfan syndrome"`)
+- `status` (string, optional): Overall-status filter — `RECRUITING`, `COMPLETED`, `ACTIVE_NOT_RECRUITING`, `TERMINATED`, ... (default: any)
+- `max_results` (int, optional): 1–50 (default: 10)
+
+**Returns:** `trials` (each: nct_id, title, status, phases, study_type, conditions, summary, url).
+
+### Genetics Tools
+
+#### 10. `find_genetic_variants`
+
+Find clinically-relevant variants for a gene from NCBI ClinVar. Pairs with `get_disease_info` to complete the **symptom → disease → gene → variant** chain.
+
+**Parameters:**
+- `gene` (string, required): Gene symbol (e.g. `"FBN1"`)
+- `clinical_significance` (string, optional): `pathogenic` (default), `likely pathogenic`, `benign`, `likely benign`, `uncertain significance`, or `any`
+- `max_results` (int, optional): 1–50 (default: 15)
+
+**Returns:** `total_matches` and `variants` (each: accession, name/HGVS, type, gene, clinical_significance, review_status, protein_change, conditions, location).
+
 ## Search Query Examples
 
 ### Basic Searches
@@ -174,7 +252,7 @@ If you configured your API key in the `.env` file during installation:
 ```json
 {
   "mcpServers": {
-    "pubmed": {
+    "biomed": {
       "command": "/path/to/pubmed-mcp/venv/bin/python",
       "args": ["/path/to/pubmed-mcp/server.py"]
     }
@@ -189,7 +267,7 @@ Alternatively, you can specify the API key directly in the Claude Desktop config
 ```json
 {
   "mcpServers": {
-    "pubmed": {
+    "biomed": {
       "command": "/path/to/pubmed-mcp/venv/bin/python",
       "args": ["/path/to/pubmed-mcp/server.py"],
       "env": {
@@ -224,14 +302,29 @@ The server provides comprehensive error handling:
 ### Project Structure
 ```
 pubmed-mcp/
-├── server.py              # Main MCP server implementation
-├── pubmed_client.py       # PubMed API client wrapper
-├── requirements.txt       # Python dependencies
-├── setup.sh              # Automated setup script
-├── .gitignore            # Git ignore file
-├── README.md             # This file
-├── .env.example          # Environment variables template
-└── venv/                 # Virtual environment (created by setup)
+├── server.py                   # MCP server: builds shared clients, registers tools
+├── clients/                    # One HTTP client per data source
+│   ├── base.py                 #   shared session, rate limiting, retries
+│   ├── ncbi_client.py          #   NCBI E-utilities via db= (PubMed/ClinVar/Gene/MeSH/...)
+│   ├── monarch_client.py       #   Monarch Initiative v3 (phenotype→disease semsim, entity)
+│   ├── hpo_client.py           #   HPO term autocomplete (symptom → HP: code)
+│   ├── orphanet_client.py      #   Orphanet rare-disease definitions (api.orphacode.org)
+│   ├── medlineplus_client.py   #   MedlinePlus Connect (patient-friendly info by ICD-10-CM)
+│   ├── europepmc_client.py     #   Europe PMC literature search
+│   ├── clinicaltrials_client.py#   ClinicalTrials.gov v2
+│   └── omim_client.py          #   OMIM (optional; needs OMIM_API_KEY)
+├── tools/                      # Task-oriented MCP tools, grouped by capability
+│   ├── literature.py           #   PubMed search / download
+│   ├── evidence.py             #   Europe PMC literature + clinical trials
+│   ├── genetics.py             #   ClinVar variants
+│   └── conditions.py           #   symptom→disease, enriched disease info, HPO lookup
+├── test_smoke.py               # Live smoke test (venv/bin/python test_smoke.py)
+├── TODO.md                     # Build roadmap
+├── requirements.txt            # Python dependencies
+├── setup.sh                    # Automated setup script
+├── README.md                   # This file
+├── .env.example                # Environment variables template
+└── venv/                       # Virtual environment (created by setup)
 ```
 
 ### Dependencies
