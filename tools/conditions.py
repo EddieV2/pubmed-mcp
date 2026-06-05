@@ -145,27 +145,45 @@ def _find_conditions(monarch, hpo, symptoms: List[str], max_results: int, metric
     }
 
 
-def _enrich_disease(xrefs: List[str], orphanet, medlineplus, omim) -> Dict[str, Any]:
+def _enrich_disease(xrefs: List[str], orphanet, medlineplus, omim, ols=None) -> Dict[str, Any]:
     """Best-effort multi-source enrichment keyed off a disease's cross-references.
 
     Each source is optional and isolated: a failure or a missing client degrades that one
-    field, never the whole card.
+    field, never the whole card. Orphanet is queried with redundancy — its own (intermittently
+    flaky) real-time API first, falling back to the same definition from EBI OLS/ORDO.
     """
     enrichment: Dict[str, Any] = {}
 
-    if orphanet:
-        orpha = next((x for x in xrefs if x.upper().startswith(("ORPHANET:", "ORPHA:"))), None)
-        if orpha:
+    orpha = next((x for x in xrefs if x.upper().startswith(("ORPHANET:", "ORPHA:"))), None)
+    if orpha:
+        orpha_code = orpha.split(":", 1)[1]
+        rare: Dict[str, Any] = {}
+        error = ""
+        # Primary: Orphanet's own API (richest — status, synonyms, canonical URL).
+        if orphanet:
             try:
-                ent = orphanet.get_clinical_entity(orpha.split(":", 1)[1])
-                enrichment["orphanet"] = {
+                ent = orphanet.get_clinical_entity(orpha_code)
+                rare = {
                     "orphacode": ent.get("ORPHAcode"),
                     "preferred_term": ent.get("Preferred term"),
                     "definition": ent.get("Definition"),
                     "url": ent.get("Orphanet URL"),
+                    "source": "Orphanet API",
                 }
             except Exception as e:
-                enrichment["orphanet"] = {"error": str(e)}
+                error = str(e)
+        # Fallback: EBI OLS/ORDO (same data, reliable host) when the primary gave no definition.
+        if not rare.get("definition") and ols:
+            try:
+                fb = ols.get_ordo_term(orpha_code)
+                if fb and fb.get("definition"):
+                    rare = fb
+            except Exception as e:
+                error = error or str(e)
+        if rare.get("definition") or rare.get("preferred_term"):
+            enrichment["orphanet"] = rare
+        elif error:
+            enrichment["orphanet"] = {"error": error}
 
     if medlineplus:
         icd = next((x for x in xrefs if x.upper().startswith("ICD10CM:")), None)
@@ -189,7 +207,7 @@ def _enrich_disease(xrefs: List[str], orphanet, medlineplus, omim) -> Dict[str, 
 
 
 def _get_disease_info(
-    monarch, disease_id: str, *, orphanet=None, medlineplus=None, omim=None, enrich: bool = True
+    monarch, disease_id: str, *, orphanet=None, medlineplus=None, omim=None, ols=None, enrich: bool = True
 ) -> Dict[str, Any]:
     entity = monarch.get_entity(disease_id)
     inheritance = entity.get("inheritance")
@@ -214,7 +232,7 @@ def _get_disease_info(
     }
 
     if enrich:
-        extra = _enrich_disease(xrefs, orphanet, medlineplus, omim)
+        extra = _enrich_disease(xrefs, orphanet, medlineplus, omim, ols)
         if extra:
             card["enrichment"] = extra
             if isinstance(extra.get("orphanet"), dict) and "error" not in extra["orphanet"]:
@@ -226,7 +244,7 @@ def _get_disease_info(
     return card
 
 
-def register(mcp, monarch, hpo, orphanet=None, medlineplus=None, omim=None) -> None:
+def register(mcp, monarch, hpo, orphanet=None, medlineplus=None, omim=None, ols=None) -> None:
     """Attach symptom→disease tools to the MCP server."""
 
     @mcp.tool()
@@ -299,7 +317,7 @@ def register(mcp, monarch, hpo, orphanet=None, medlineplus=None, omim=None) -> N
                 return {"error": "disease_id is required (e.g. MONDO:0007947)."}
             return _get_disease_info(
                 monarch, disease_id.strip(),
-                orphanet=orphanet, medlineplus=medlineplus, omim=omim, enrich=enrich,
+                orphanet=orphanet, medlineplus=medlineplus, omim=omim, ols=ols, enrich=enrich,
             )
         except Exception as e:
             return {"error": f"Disease lookup failed: {e}"}

@@ -12,6 +12,7 @@ import asyncio
 import sys
 
 import server
+from clients.base import UpstreamUnavailable
 from tools.conditions import _find_conditions, _get_disease_info, _map_symptoms_to_hpo
 from tools.genetics import _find_variants
 
@@ -54,7 +55,7 @@ def main() -> int:
 
     # 4) Disease card + multi-source enrichment (Monarch + Orphanet + MedlinePlus).
     info = _get_disease_info(server.monarch, "MONDO:0007947", orphanet=server.orphanet,
-                             medlineplus=server.medlineplus, omim=server.omim)
+                             medlineplus=server.medlineplus, omim=server.omim, ols=server.ols)
     genes = [g.upper() for g in info.get("causal_genes", [])]
     enr = info.get("enrichment", {})
     orpha_ok = isinstance(enr.get("orphanet"), dict) and bool(enr["orphanet"].get("definition"))
@@ -62,6 +63,18 @@ def main() -> int:
                    info.get("name") == "Marfan syndrome" and "FBN1" in genes and orpha_ok,
                    f"genes={info.get('causal_genes')}, sources={info.get('sources')}, "
                    f"patient_info={'yes' if enr.get('patient_info') else 'no'}"))
+
+    # 4b) Orphanet redundancy: force the primary API to fail; OLS/ORDO must fill the definition.
+    class _BoomOrphanet:
+        def get_clinical_entity(self, code):
+            raise UpstreamUnavailable("forced failure (fallback regression test)")
+
+    fb_info = _get_disease_info(server.monarch, "MONDO:0019759", orphanet=_BoomOrphanet(),
+                                medlineplus=None, omim=None, ols=server.ols)
+    fb = fb_info.get("enrichment", {}).get("orphanet", {})
+    r.append(check("orphanet fallback -> OLS/ORDO",
+                   bool(fb.get("definition")) and fb.get("source") == "EBI OLS (ORDO)",
+                   f"source={fb.get('source')}, term={fb.get('preferred_term')}"))
 
     # 5) Gene -> ClinVar variants (the disease->gene->variant chain).
     var = _find_variants(server.ncbi, "FBN1", "pathogenic", 5)

@@ -21,6 +21,7 @@ from clients.hpo_client import HPOClient
 from clients.medlineplus_client import MedlinePlusClient
 from clients.monarch_client import MonarchClient
 from clients.ncbi_client import NCBIClient
+from clients.ols_client import OLSClient
 from clients.omim_client import OMIMClient
 from clients.orphanet_client import OrphanetClient
 from tools import conditions, evidence, genetics, literature
@@ -37,6 +38,7 @@ ncbi = NCBIClient(api_key=os.getenv("NCBI_API_KEY"), email=os.getenv("NCBI_EMAIL
 monarch = MonarchClient()
 hpo = HPOClient()
 orphanet = OrphanetClient()
+ols = OLSClient()
 medlineplus = MedlinePlusClient()
 europepmc = EuropePMCClient()
 trials = ClinicalTrialsClient()
@@ -49,7 +51,7 @@ omim = OMIMClient(api_key=_omim_key) if _omim_key else None
 literature.register(mcp, ncbi)                  # search_articles, download_article(s), get_article_summaries
 evidence.register(mcp, europepmc, trials)       # search_literature, search_clinical_trials
 genetics.register(mcp, ncbi)                    # find_genetic_variants
-conditions.register(mcp, monarch, hpo, orphanet, medlineplus, omim)  # lookup_hpo_terms, find_conditions_by_symptoms, get_disease_info
+conditions.register(mcp, monarch, hpo, orphanet, medlineplus, omim, ols)  # lookup_hpo_terms, find_conditions_by_symptoms, get_disease_info
 
 
 if __name__ == "__main__":
