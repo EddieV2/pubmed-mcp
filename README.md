@@ -243,7 +243,20 @@ Find clinically-relevant variants for a gene from NCBI ClinVar. Pairs with `get_
 - `[PDAT]` - Search by publication date
 - `[MeSH]` - Search MeSH terms
 
-## Integration with Claude Desktop
+## Integration
+
+This server speaks MCP over stdio and works with any MCP client.
+
+### Claude Code (CLI)
+
+```bash
+# Use absolute paths to the venv Python and server.py
+claude mcp add biomed -- /path/to/pubmed-mcp/venv/bin/python /path/to/pubmed-mcp/server.py
+```
+
+Add `--scope user` to make it available across all your projects (the default scope is this project only). Verify with `claude mcp list`, then start a new Claude Code session to load the tools. Optional keys (e.g. `NCBI_API_KEY`, `OMIM_API_KEY`) are read from a `.env` file next to `server.py`, or pass them with `--env KEY=value`.
+
+### Claude Desktop
 
 ### Option 1: Using .env file (Recommended)
 
