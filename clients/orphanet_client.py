@@ -17,8 +17,18 @@ class OrphanetClient(BaseHTTPClient):
 
     def __init__(self) -> None:
         super().__init__(self.BASE_URL, min_interval=0.2, headers={"apiKey": "biomed-mcp"})
+        # Memoize successful lookups for the process lifetime. Orphanet clinical entities are
+        # stable reference data, and api.orphacode.org has intermittently unreliable DNS — so a
+        # disease that resolved once keeps enriching cards through later outages. Only successful
+        # fetches are stored (failures raise before reaching the cache), so it can't be poisoned.
+        self._cache: Dict[str, Dict[str, Any]] = {}
 
     def get_clinical_entity(self, orphacode: str) -> Dict[str, Any]:
-        """Fetch a rare-disease clinical entity by ORPHA code (digits only)."""
+        """Fetch a rare-disease clinical entity by ORPHA code (digits only), memoized on success."""
         code = "".join(ch for ch in str(orphacode) if ch.isdigit())
-        return self.get_json(f"ClinicalEntity/orphacode/{code}")
+        cached = self._cache.get(code)
+        if cached is not None:
+            return cached
+        entity = self.get_json(f"ClinicalEntity/orphacode/{code}")
+        self._cache[code] = entity
+        return entity
